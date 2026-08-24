@@ -1,0 +1,460 @@
+V.E.Y.R. — Variable Evolving Yield-Reactive
+===============================================
+
+Concept général
+---------------
+
+V.E.Y.R. est un système d'IA horrifique procédurale pour Unity/C#.
+
+Définition :
+V = Variable
+E = Evolving
+Y = Yield-Reactive
+R = Reactive/selon la convention retenue, le nom complet du système est :
+"Variable Evolving Yield-Reactive"
+
+Objectif :
+Créer une créature qui ne se contente pas de poursuivre le joueur. V.E.Y.R. observe le joueur, mémorise ses habitudes, évalue sa tension, choisit une stratégie, puis modifie progressivement son comportement et son apparence.
+
+Principe fondamental :
+VEYŔ ne doit pas toujours essayer de tuer le joueur.
+Il peut : observer, disparaître, faire du bruit, apparaître très loin, traverser brièvement une pièce, rester immobile, poursuivre, s'arrêter juste avant le joueur, ou revenir plus tard différemment.
+
+Architecture :
+Veyr -> VeyrGenome, VeyrObserver, VeyrMemory, VeyrFear, VeyrDirector, VeyrBehaviour, VeyrMutation, VeyrAudio, VeyrEncounter.
+
+Fréquences recommandées :
+- 60 FPS : mouvement, rotation, animation.
+- 5-10 fois/seconde : observation, distance, visibilité.
+- 1-2 fois/seconde : analyse du joueur, calcul de peur, décision.
+- Quelques fois par rencontre : mutation et apprentissage.
+
+1. Génome de VEYR
+-----------------
+
+Chaque VEYR possède un génome procédural :
+
+    [System.Serializable]
+    public class VeyrGenome
+    {
+        public float height;
+        public float width;
+        public float headSize;
+        public float armLength;
+        public float legLength;
+        public float speed;
+        public float acceleration;
+        public float intelligence;
+        public float aggression;
+        public float curiosity;
+        public float patience;
+        public float unpredictability;
+        public float mutationRate;
+    }
+
+Les valeurs définissent la personnalité fondamentale de la créature. Deux VEYR peuvent donc avoir des comportements différents.
+
+2. Génome vs mémoire
+---------------------
+
+Le génome représente ce que VEYR EST : intelligence, vitesse, patience, agressivité.
+La mémoire représente ce que VEYR A APPRIS : habitudes du joueur, utilisation de la lampe, fuite, cachettes, regards derrière lui.
+
+3. Observation du joueur
+------------------------
+
+VeyrObserver analyse les actions du joueur : regarder derrière, utiliser la lampe, se cacher, fuir, rester immobile, réagir à un son ou à une apparition.
+VEYŔ observe également les réactions provoquées par lui-même.
+
+4. Mémoire
+---------
+
+    [System.Serializable]
+    public class VeyrMemory
+    {
+        public float flashlightUsage;
+        public float running;
+        public float hiding;
+        public float lookingBehind;
+        public float standingStill;
+        public float aggressionResponse;
+        public float panicResponse;
+        public int encounters;
+    }
+
+Les valeurs sont idéalement normalisées entre 0 et 1.
+La mémoire évolue progressivement :
+
+    memory.running = Mathf.Lerp(memory.running, 1f, 0.05f);
+
+5. Système de peur
+------------------
+
+    float fear;
+
+0 = aucune tension ; 1 = panique maximale.
+Cette valeur est une métrique de gameplay.
+
+    fear =
+          proximity        * 0.25f
+        + visibility       * 0.10f
+        + vulnerability    * 0.15f
+        + uncertainty      * 0.20f
+        + audioThreat      * 0.10f
+        + unpredictability * 0.20f;
+
+    fear = Mathf.Clamp01(fear);
+
+6. Proximité
+------------
+
+    float proximity = 1f - Mathf.Clamp01(distance / detectionRange);
+
+VEYŔ très loin : proximité proche de 0.
+VEYŔ très proche : proximité proche de 1.
+Une proximité élevée ne signifie pas attaque obligatoire.
+
+7. Visibilité
+-------------
+
+Vérifier si le joueur regarde VEYŔ.
+Derrière le joueur : visibility = 0.
+Dans le champ de vision : visibility = 1.
+
+Cela permet à VEYŔ de rester immobile quand il est observé et de bouger lorsque le joueur regarde ailleurs.
+
+8. Incertitude
+--------------
+
+L'incertitude augmente lorsque le joueur entend quelque chose sans voir VEYŔ, qu'une porte bouge, qu'une ombre apparaît, que VEYŔ disparaît ou que sa position est inconnue.
+Une créature peut donc être plus inquiétante lorsqu'elle n'est pas visible.
+
+9. VeyrDirector
+---------------
+
+Le Director est le cerveau décisionnel.
+Entrées : Genome, Memory, Fear, Environment, PlayerState.
+Sortie : VeyrAction.
+
+    public enum VeyrAction
+    {
+        Nothing,
+        Watch,
+        Stalk,
+        Hide,
+        Follow,
+        PassBy,
+        MakeSound,
+        Reveal,
+        Chase,
+        Retreat,
+        Mutate
+    }
+
+Le Director ne doit pas simplement utiliser Random.Range.
+Il doit : générer les actions candidates, calculer leur score, tenir compte de la peur, mémoire, génome, environnement, actions récentes, ajouter de l'aléatoire contrôlé, puis choisir.
+
+10. Régulation de la peur
+-------------------------
+
+    0.00 - 0.30 : calme
+    0.30 - 0.60 : tension
+    0.60 - 0.80 : peur
+    0.80 - 0.90 : forte peur
+    0.90 - 1.00 : saturation
+
+Si fear est très haute, VEYR peut ralentir, se cacher, reculer ou arrêter les sons.
+Exemple : fear = 0.93 -> RETREAT / SILENCE.
+
+Principe : plus le joueur est terrifié, moins VEYR a besoin d'en faire.
+
+11. Casser les attentes
+-----------------------
+
+VEYŔ doit laisser le joueur apprendre des patterns puis les casser progressivement.
+Exemple : BRUIT -> VEYR derrière.
+Après apprentissage : BRUIT -> rien.
+Puis : BRUIT -> joueur regarde -> rien -> joueur avance -> VEYR apparaît sur le côté.
+
+12. Aléatoire contrôlé
+----------------------
+
+Ne pas faire 100 % random.
+
+    finalScore = logicalScore * 0.7f + Random.value * 0.3f;
+
+Environ 70 % logique et 30 % imprévisible est un point de départ, ajustable selon le jeu.
+
+13. Anti-répétition
+-------------------
+
+Mémoriser les dernières actions :
+
+    Queue<VeyrAction> recentActions;
+
+Si VEYR fait CHASE plusieurs fois, CHASE reçoit une pénalité. Le système peut favoriser WATCH, HIDE, SOUND, PASS_BY ou RETREAT.
+
+14. Adaptation
+--------------
+
+    float adaptation;
+
+Départ : 0.0, puis progression vers 1.0.
+Elle influence intelligence, imprévisibilité, mutation et stratégie.
+
+    effectiveIntelligence = genome.intelligence + adaptation * 0.5f;
+
+15. Exemple d'apprentissage
+---------------------------
+
+Si le joueur se retourne toujours après un bruit, lookingBehind peut atteindre 0.94.
+VEYŔ peut alors faire bruit derrière -> joueur se retourne -> rien, puis modifier le pattern pour apparaître sur le côté.
+
+16. Mutation physique
+---------------------
+
+    mutation += genome.mutationRate;
+
+Exemple :
+0.00 humanoïde presque normal ; 0.20 bras légèrement longs ; 0.40 posture étrange ; 0.60 mouvements anormaux ; 0.80 anatomie difficile à comprendre ; 1.00 forme extrêmement différente.
+
+Certaines caractéristiques peuvent rester constantes : silhouette générale, démarche, voix, détail du visage.
+D'autres peuvent évoluer : bras, posture, visage, vitesse, comportement, mouvements.
+
+17. Mutation comportementale
+----------------------------
+
+0.0 : marche normalement.
+0.3 : s'arrête parfois.
+0.5 : regarde dans des directions étranges.
+0.7 : change brutalement de direction.
+0.9 : comportement très irrégulier.
+
+18. Locomotion
+--------------
+
+Séparer la décision du mouvement.
+
+    public enum MovementStyle
+    {
+        Human,
+        Uneven,
+        Jerky,
+        Slow,
+        Fast,
+        Erratic
+    }
+
+Exemple de séquence : WALK -> STOP -> LOOK -> WALK -> FREEZE -> RAPID_MOVE.
+
+19. Audio
+---------
+
+Types possibles : NONE, BREATH, FOOTSTEP, SCRATCH, WHISPER, DISTANT_IMPACT.
+
+L'audio dépend de la distance et de la situation.
+Exemple : 40 m -> son très faible ; 15 m -> respiration ; 5 m -> silence possible.
+Le silence est une action à part entière.
+
+20. Rencontres
+-------------
+
+Une rencontre n'est pas forcément spawn -> chase -> attack -> destroy.
+
+    Encounter
+    ├── Setup
+    ├── Presence
+    ├── Escalation
+    ├── Peak
+    └── Resolution
+
+Setup : placer VEYR dans un endroit intéressant.
+Presence : bruit, ombre, silhouette, porte, respiration, etc.
+Escalation : bruit -> ombre -> silhouette -> mouvement.
+Peak : apparition, passage, apparition derrière, poursuite courte, etc.
+Resolution : VEYŔ disparaît, recule ou se cache.
+
+Après la rencontre : mémoire mise à jour, adaptation augmentée, mutation éventuelle et rencontre enregistrée.
+
+21. Spawn procédural
+--------------------
+
+Ne pas utiliser simplement Random.insideUnitSphere.
+
+Créer des VeyrSpawnPoint contenant : distance, visibility, cover, light, importance, safety.
+Calculer un score par point et choisir le meilleur candidat.
+Le spawn doit être guidé par le contexte du niveau.
+
+22. Disparition
+--------------
+
+Ne pas toujours faire Destroy(gameObject).
+VEYŔ peut reculer, passer derrière un obstacle, sortir du champ de vision, couper la lumière, rester caché, s'éloigner ou simplement ne plus être observable.
+
+23. Boucle complète
+-------------------
+
+    INITIALIZE VEYR
+    generate genome
+    generate appearance
+    generate personality
+
+    WHILE game is running:
+        observe player
+        detect movement, running, hiding, flashlight, looking, reactions
+        update memory
+        calculate distance, visibility, vulnerability, uncertainty, audio threat, fear
+        calculate adaptation
+        generate possible actions
+        for each action:
+            calculate logical score
+            apply fear, memory, genome, environment, recent actions, adaptation
+            add controlled randomness
+        select best action
+        execute action
+        if encounter ends:
+            analyze player reaction
+            update memory
+            increase adaptation
+            possibly mutate VEYR
+            record encounter
+        repeat
+
+24. Architecture finale
+-----------------------
+
+                    PLAYER
+                       |
+                       v
+                +-------------+
+                |   OBSERVER  |
+                +------+------+
+                       |
+                       v
+                +-------------+
+                |   MEMORY    |
+                +------+------+
+                       |
+                       v
+                +-------------+
+                | FEAR SYSTEM |
+                +------+------+
+                       |
+             +---------+---------+
+             |                   |
+             v                   v
+          Genome              Memory
+             |                   |
+             +---------+---------+
+                       |
+                       v
+                +-------------+
+                |   DIRECTOR  |
+                +------+------+
+                       |
+                       v
+                Candidate actions
+                       |
+                       v
+              Score + randomness
+                       |
+                       v
+                 Selected action
+                       |
+          +------------+------------+
+          |            |            |
+          v            v            v
+       Movement      Audio       Mutation
+          |            |            |
+          +------------+------------+
+                       |
+                       v
+                   ENCOUNTER
+                       |
+                       v
+                PLAYER REACTION
+                       |
+                       v
+                    MEMORY
+                       |
+                       v
+                  ADAPTATION
+                       |
+                       +----------> nouvelle décision
+
+25. Exemple de progression d'une partie
+-----------------------------------------
+
+Rencontre 1 : VEYR à 35 m, peur faible, son distant.
+Rencontre 2 : VEYR passe au bout d'un couloir, le joueur se retourne, VEYR disparaît.
+Rencontre 3 : VEYR apprend que le joueur regarde souvent derrière lui et apparaît sur les côtés.
+Rencontre 4 : VEYR apprend que le joueur utilise beaucoup sa lampe et adapte ses apparitions à la lumière.
+Rencontre 5 : peur très élevée, VEYR ne poursuit pas, il disparaît et laisse le joueur respirer.
+Après quelques minutes : peur redescendue, VEYR recommence à construire la tension.
+
+26. Philosophie finale de VEYR
+------------------------------
+
+VEYŔ ne cherche pas constamment à attaquer.
+Il cherche à comprendre comment le joueur réagit.
+Puis il devient progressivement quelque chose que le joueur ne sait plus anticiper.
+
+Formule :
+
+    GENOME
+        +
+    MEMORY
+        +
+    PLAYER BEHAVIOR
+        +
+    FEAR
+        +
+    WORLD STATE
+        +
+    CONTROLLED RANDOM
+        |
+        v
+      DIRECTOR
+        |
+        v
+       ACTION
+        |
+    +---+---+---+
+    |   |   |   |
+    v   v   v   v
+  MOVE AUDIO MUTATE ...
+        |
+        v
+    ENCOUNTER
+        |
+        v
+ PLAYER REACTION
+        |
+        v
+     MEMORY
+        |
+        v
+   ADAPTATION
+        |
+        +-------> nouvelle décision
+
+Règle fondamentale :
+"Le joueur doit pouvoir apprendre les comportements de VEYR, mais VEYR doit progressivement apprendre à casser les habitudes du joueur."
+
+Implémentation Unity recommandée
+---------------------------------
+
+Créer ensuite ces scripts C# séparés :
+
+    VeyrGenome.cs
+    VeyrObserver.cs
+    VeyrMemory.cs
+    VeyrFear.cs
+    VeyrDirector.cs
+    VeyrBehaviour.cs
+    VeyrMutation.cs
+    VeyrAudio.cs
+    VeyrEncounter.cs
+    VeyrSpawnManager.cs
+
+Ils doivent communiquer entre eux plutôt que de placer toute l'IA dans un seul script.
